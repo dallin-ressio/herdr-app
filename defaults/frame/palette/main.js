@@ -29,6 +29,7 @@ const NAMED = [
   ["tab.prev", {}, "Tab", "Previous tab", "tab"],
   ["pane.split", { direction: "right" }, "Pane", "Split right", "vertical"],
   ["pane.split", { direction: "down" }, "Pane", "Split down", "horizontal"],
+  ["pane.split", { direction: "right", mod: "browser" }, "Pane", "Browser", "web webkit url page"],
   ["pane.close", {}, "Pane", "Close pane", "kill"],
   ["pane.zoom", {}, "Pane", "Zoom pane", "maximize fullscreen"],
   ...["left", "right", "up", "down"].map((d) => ["pane.go", { direction: d }, "Pane", `Focus pane ${d}`, "move go"]),

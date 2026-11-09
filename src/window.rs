@@ -1304,6 +1304,9 @@ impl AppWindow {
     }
 
     fn remove_copy(&mut self, slot: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // The mod's close() also destroys its web view. This covers a close that
+        // doesn't run, so a pane going away never leaves a WKWebView behind.
+        crate::webview::destroy_pane(slot);
         if let Some(copy) = self.copies.remove(slot)
             && let (Some(runtime), Some(root)) = (&self.runtime, copy.root)
         {
@@ -1445,7 +1448,7 @@ impl AppWindow {
         let want: HashMap<String, Instance> = mods_visible.into_iter().collect();
         for (slot, inst) in want {
             if !self.copies.contains_key(&slot) {
-                let copy = self.load(inst, window, cx);
+                let copy = self.load(inst, slot.clone(), window, cx);
                 if slot.starts_with("float:")
                     && let Some(root) = &copy.root
                 {
@@ -1501,7 +1504,9 @@ impl AppWindow {
             self.agent = None;
             // A mod pane takes the keyboard on a click; until then the window holds
             // it, so another tab's terminal can't keep it (and pull its tab back).
-            if no_dialog {
+            if no_dialog && crate::webview::keyboard_pane().as_deref() != focused.as_deref() {
+                // A click in a web view already made it first responder. Moving the
+                // keyboard to the window here would take it back on the same update.
                 focused.and_then(|p| self.pane_focus(&p, cx)).unwrap_or_else(|| self.focus.clone()).focus(window, cx);
             }
         } else if revealed {
@@ -1646,13 +1651,13 @@ impl AppWindow {
         self.pane_term(pane).map(|t| t.view.read(cx).focus_target(cx))
     }
 
-    fn load(&self, inst: Instance, window: &mut Window, cx: &mut Context<Self>) -> Copy {
+    fn load(&self, inst: Instance, slot: String, window: &mut Window, cx: &mut Context<Self>) -> Copy {
         let mut copy = Copy { inst, id: 0, root: None, _watch: None, error: None };
         let (Some(runtime), Some(folder)) = (&self.runtime, self.folders.get(&copy.inst.name)) else {
             copy.error = Some(format!("no mod folder ~/.config/herdr-app/mods/{}", copy.inst.name));
             return copy;
         };
-        copy.id = mods::prepare_load(&copy.inst);
+        copy.id = mods::prepare_load(&copy.inst, &slot);
         match runtime.try_load(&folder.dir, window, cx) {
             Ok(root) => {
                 if self.file_events.is_none() {
@@ -3609,7 +3614,7 @@ impl AppWindow {
             focus.focus(window, cx);
         }
         if layout.is_none() {
-            let copy = self.load(Instance { name, props }, window, cx);
+            let copy = self.load(Instance { name, props }, slot.clone(), window, cx);
             // Popups (menus) are as tall as what's in them; `height` is the most.
             if fit
                 && let Some(root) = &copy.root
@@ -4036,7 +4041,10 @@ impl AppWindow {
         let mut el = div().relative().overflow_hidden().size_full().flex();
         let bounds_map = self.bounds.clone();
         let id = n.id.clone();
-        el = el.child(canvas(move |b, _, _| { bounds_map.borrow_mut().insert(id, b); }, |_, _, _, _| {}).absolute().size_full());
+        el = el.child(canvas(move |b, _, _| {
+            crate::webview::note_visible(&id);
+            bounds_map.borrow_mut().insert(id, b);
+        }, |_, _, _, _| {}).absolute().size_full());
         el = apply_look(el, n, focused.contains(&n.id));
         if n.window_drag {
             el = self.window_drag(el, cx);
@@ -4870,6 +4878,13 @@ impl Render for AppWindow {
         let _timed = crate::bench::timed(&crate::bench::WINDOW_US);
         crate::bench::frame_start();
         crate::terminal::next_frame();
+        // Web views sit above the GPU layer. Note which panes this frame lays out,
+        // then show only those once layout has reported their rectangles.
+        crate::webview::begin_frame();
+        crate::webview::note_window(window);
+        crate::webview::restore_keyboard(window);
+        crate::webview::set_obscured(self.overlays.iter().any(|o| o.kind.modal_keys()));
+        window.defer(cx, |_window, _cx| crate::webview::finish_frame());
         window.set_rem_size(px(settings::ui_font_size()));
         // A terminal the person clicked into becomes the focused pane.
         let clicked = self

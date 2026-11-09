@@ -1394,9 +1394,10 @@ const ELEMENT_METHODS: &str = r#"    /**
     on_click<Self extends Element>(this: Self, handler: (event: ClickEvent, cx: Context) => void): Self;
     /** GPUI `InteractiveElement::on_mouse_move`, delivered while this element is hovered. */
     on_mouse_move<Self extends Element>(this: Self, handler: (event: MouseMoveEvent, cx: Context) => void): Self;
-    /** div/h_flex/v_flex: initial size and changed layout size, in logical pixels.
-     * Runs after layout, even without pointer movement. Use a stable id. */
-    on_size_change<Self extends Element>(this: Self, handler: (size: { width: number; height: number }, cx: Context) => void): Self;
+    /** div/h_flex/v_flex: initial bounds and changed layout bounds, in logical pixels.
+     * `x` and `y` are the window position. Runs after layout, even without pointer movement,
+     * including when only the position changes. Use a stable id. */
+    on_size_change<Self extends Element>(this: Self, handler: (size: { x: number; y: number; width: number; height: number }, cx: Context) => void): Self;
     /** GPUI `InteractiveElement::on_hover`; reports both pointer entry and exit. */
     on_hover<Self extends Element>(this: Self, handler: (hovered: boolean, cx: Context) => void): Self;
     /**

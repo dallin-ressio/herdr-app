@@ -751,6 +751,13 @@ fn opt_str(v: Option<&HostValue>, key: &str) -> Option<String> {
     v.and_then(|o| o.get(key)).and_then(HostValue::as_str).map(str::to_owned)
 }
 
+fn opt_f32(v: Option<&HostValue>, key: &str) -> Option<f32> {
+    v.and_then(|o| o.get(key)).and_then(|n| match n {
+        HostValue::Number(n) => Some(*n as f32),
+        _ => None,
+    })
+}
+
 const EXEC_LIMIT: Duration = Duration::from_secs(30);
 const EXEC_MAX: Duration = Duration::from_secs(600);
 const EXEC_OUTPUT: u64 = 8 << 20;
@@ -895,7 +902,7 @@ fn exec_future(command: String, args: Vec<String>, cwd: Option<String>, on: Opti
     }
 }
 
-fn module(inst: Instance, copy: u64) -> HostModule {
+fn module(inst: Instance, copy: u64, slot: String) -> HostModule {
     let reads = Rc::new(RefCell::new(LiveReads::default()));
     LIVE_READS.with_borrow_mut(|copies| {
         copies.retain(|_, reads| reads.strong_count() > 0);
@@ -1107,6 +1114,45 @@ fn module(inst: Instance, copy: u64) -> HostModule {
             let rx = commands.clone();
             Ok(async move { rx.recv().await.map(HostValue::Str).map_err(|_| HostError::new("herdr-app is shutting down")) })
         })
+        .function("slot", {
+            let slot = slot.clone();
+            move |_| Ok(HostValue::Str(slot.clone()))
+        })
+        .function("webviewCreate", {
+            let slot = slot.clone();
+            move |a| {
+                let url = opt_str(a.get(0), "url");
+                let pane = opt_str(a.get(0), "pane").filter(|s| !s.is_empty()).unwrap_or(slot.clone());
+                if pane.is_empty() {
+                    return Err(HostError::new("webviewCreate needs a pane"));
+                }
+                crate::webview::create(pane, url).map(HostValue::Str).map_err(HostError::new)
+            }
+        })
+        .function("webviewNavigate", |a| {
+            let id = a.string(0)?.to_owned();
+            let url = a.string(1)?.to_owned();
+            crate::webview::navigate(&id, &url).map(|_| HostValue::Null).map_err(HostError::new)
+        })
+        .function("webviewBack", |a| crate::webview::go_back(a.string(0)?).map(|_| HostValue::Null).map_err(HostError::new))
+        .function("webviewForward", |a| crate::webview::go_forward(a.string(0)?).map(|_| HostValue::Null).map_err(HostError::new))
+        .function("webviewReload", |a| crate::webview::reload(a.string(0)?).map(|_| HostValue::Null).map_err(HostError::new))
+        .function("webviewFocus", |a| crate::webview::focus(a.string(0)?).map(|_| HostValue::Null).map_err(HostError::new))
+        .function("webviewBlur", |a| crate::webview::blur(a.string(0)?).map(|_| HostValue::Null).map_err(HostError::new))
+        .function("webviewFrame", |a| {
+            let id = a.string(0)?.to_owned();
+            let frame = a.get(1);
+            let x = opt_f32(frame, "x").ok_or_else(|| HostError::new("webviewFrame needs x, y, width and height"))?;
+            let y = opt_f32(frame, "y").ok_or_else(|| HostError::new("webviewFrame needs x, y, width and height"))?;
+            let width = opt_f32(frame, "width").ok_or_else(|| HostError::new("webviewFrame needs x, y, width and height"))?;
+            let height = opt_f32(frame, "height").ok_or_else(|| HostError::new("webviewFrame needs x, y, width and height"))?;
+            crate::webview::set_frame(&id, crate::webview::Frame { x, y, width, height }).map(|_| HostValue::Null).map_err(HostError::new)
+        })
+        .function("webviewDestroy", |a| {
+            crate::webview::destroy(a.string(0)?);
+            Ok(HostValue::Null)
+        })
+        .function("webviewState", |a| Ok(crate::webview::state(a.string(0)?).map(|v| to_host(&v)).unwrap_or(HostValue::Null)))
 }
 
 /// The runtime's base layer, themed from settings.json.
@@ -1161,7 +1207,7 @@ pub fn install_check_policy() {
 pub fn install_policy() -> async_channel::Receiver<Request> {
     gpui_shell::policy::update_default(|p| {
         p.with_capabilities(capabilities())
-            .with_host_module(module(Instance { name: String::new(), props: Value::Null }, 0))
+            .with_host_module(module(Instance { name: String::new(), props: Value::Null }, 0, String::new()))
             .expect("herdr module is valid")
     });
     let (tx, rx) = async_channel::unbounded();
@@ -1174,7 +1220,7 @@ pub fn install_policy() -> async_channel::Receiver<Request> {
 /// view a copy of the default that *shares* modules and storage, so each copy
 /// needs a fresh default rather than an edit of the old one.
 /// Readies the next load of `inst`; returns the copy's number (for commands).
-pub fn prepare_load(inst: &Instance) -> u64 {
+pub fn prepare_load(inst: &Instance, slot: &str) -> u64 {
     let copy = COPY_SEQ.with(|s| {
         s.set(s.get() + 1);
         s.get()
@@ -1193,7 +1239,7 @@ pub fn prepare_load(inst: &Instance) -> u64 {
         .with_application(inst.key())
         .with_capabilities(capabilities())
         .with_storage_path(dir.join(file))
-        .with_host_module(module(inst.clone(), copy))
+        .with_host_module(module(inst.clone(), copy, slot.to_owned()))
         .expect("herdr module is valid");
     gpui_shell::policy::set_default(policy);
     copy
@@ -1285,13 +1331,13 @@ mod tests {
     fn loading_copies_reclaims_closed_command_channels_without_dispatch() {
         std::thread::spawn(|| {
             let inst = Instance { name: "test".into(), props: Value::Null };
-            let live = module(inst.clone(), 1);
+            let live = module(inst.clone(), 1, "1".into());
             for copy in 2..102 {
-                drop(module(inst.clone(), copy));
+                drop(module(inst.clone(), copy, copy.to_string()));
                 COMMANDS.with_borrow(|commands| assert!(commands.len() <= 2));
             }
             drop(live);
-            let last = module(inst, 102);
+            let last = module(inst, 102, "102".into());
             COMMANDS.with_borrow(|commands| assert_eq!(commands.len(), 1));
             drop(last);
         }).join().unwrap();

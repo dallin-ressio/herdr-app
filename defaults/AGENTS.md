@@ -32,9 +32,10 @@ and terminals, open dialogs, popups and floating blocks, show a live
 terminal inside a block, run any app command, run programs (`exec`) and
 fetch URLs, keep state per mod or shared between mods, animate natively.
 
-You can't: use HTML, CSS, a web view, Node APIs or `setTimeout`; draw
-outside your block except through overlays; change how a terminal itself
-draws text; read or change other mods' code at run time.
+You can't: use HTML, CSS, Node APIs or `setTimeout`; draw outside your
+block except through overlays; change how a terminal itself draws text;
+read or change other mods' code at run time. A page is a WebKit view
+(`webviewCreate`), macOS only, not HTML inside the mod.
 
 ## What mods are written in
 
@@ -902,9 +903,18 @@ Rules:
 - No `setTimeout`/`setInterval` (use `cx.timer`), no top-level `await` (use
   `cx.spawn` in `init`). Anything slow goes through `exec` or `fetch`.
 - Size: put `.id("root").on_size_change((size, cx) => { this.size = size; cx.notify(); })`
-  on the root `div()`, `h_flex()` or `v_flex()`. It reports `{width, height}`
-  in logical pixels after the first layout and whenever the size changes,
-  even with the pointer elsewhere. It does not change `props()`.
+  on the root `div()`, `h_flex()` or `v_flex()`. It reports `{x, y, width, height}`
+  in logical pixels after the first layout and whenever the size or window
+  position changes, even with the pointer elsewhere. `x` and `y` are the
+  window position. It does not change `props()`.
+- Web view (macOS): `slot()` is this copy's layout slot (a mod pane's id).
+  `webviewCreate({ url, pane })` returns a handle; `pane` defaults to `slot()`.
+  `webviewFrame(handle, {x, y, width, height})` places it. `webviewNavigate`,
+  `webviewBack`, `webviewForward`, `webviewReload`, `webviewFocus`, `webviewBlur`,
+  `webviewState` (url, title, loading, canGoBack, canGoForward) and
+  `webviewDestroy`. Only `http`, `https` and `about:blank`. Panes share one
+  persistent cookie store. The view covers its rectangle and hides while a
+  dialog or popup is open. Call `webviewDestroy` from `close()`.
 - Cleanup: an optional `async close(cx)` on the exported `View` gets one final
   call when its pane, tab, layout-owned slot or overlay goes, and on app quit.
   It is not called for a hidden copy or an inactive tab. Start cleanup inside

@@ -419,3 +419,41 @@ export function nextCommand(): Promise<string>;
  * Watch what you show, not a whole home folder (node_modules is a lot of events).
  */
 export function watchFolder(path: string): Promise<string[]>;
+
+/** This copy's layout slot. For a mod pane, that is the pane id. */
+export function slot(): string;
+
+/**
+ * Opens a native WebKit view on macOS and returns its handle.
+ * `pane` defaults to `slot()`. Only http, https and about:blank.
+ * Other platforms throw. Panes share one persistent cookie store.
+ */
+export function webviewCreate(options?: { url?: string; pane?: string }): string;
+
+/** Loads an http or https address, or about:blank. */
+export function webviewNavigate(handle: string, url: string): null;
+export function webviewBack(handle: string): null;
+export function webviewForward(handle: string): null;
+export function webviewReload(handle: string): null;
+
+/** Gives the page the keyboard, or returns it to the Herdr window. */
+export function webviewFocus(handle: string): null;
+export function webviewBlur(handle: string): null;
+
+/**
+ * Places the view in window coordinates (the `on_size_change` rectangle).
+ * A view shows only while its pane is laid out and no dialog or popup is open.
+ */
+export function webviewFrame(handle: string, frame: { x: number; y: number; width: number; height: number }): null;
+
+/** Removes the view. Also happens when its pane slot goes away. */
+export function webviewDestroy(handle: string): null;
+
+/** The live page. Null when the handle is gone. */
+export function webviewState(handle: string): {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+} | null;

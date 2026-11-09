@@ -4101,7 +4101,7 @@ impl ShellRuntime {
     pub(crate) fn dispatch_size_change(
         self: &Rc<Self>,
         id: CallbackId,
-        size: gpui::Size<gpui::Pixels>,
+        bounds: gpui::Bounds<gpui::Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -4118,8 +4118,11 @@ impl ShellRuntime {
         let result = self.with_js(|ctx| {
             let handler = entry.value.clone().restore(ctx)?;
             let payload = Object::new(ctx.clone())?;
-            payload.set("width", f32::from(size.width))?;
-            payload.set("height", f32::from(size.height))?;
+            // HERDR: window position, so a mod can place a native view on this element.
+            payload.set("x", f32::from(bounds.origin.x))?;
+            payload.set("y", f32::from(bounds.origin.y))?;
+            payload.set("width", f32::from(bounds.size.width))?;
+            payload.set("height", f32::from(bounds.size.height))?;
             handler.call::<_, ()>((payload, context_object(ctx, ContextBinding::Call(generation))?))
         });
         if let Err(error) = result {

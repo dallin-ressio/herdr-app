@@ -3701,6 +3701,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "base64",
+ "block2 0.6.2",
  "fancy-regex 0.19.2",
  "ghostty-sys",
  "gpui-base",
@@ -3714,6 +3715,10 @@ dependencies = [
  "image",
  "libc",
  "notify",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-web-kit",
  "png 0.17.16",
  "raw-window-handle",
  "serde",
@@ -5656,6 +5661,20 @@ dependencies = [
  "block2 0.6.2",
  "objc2 0.6.4",
  "objc2-core-location",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-web-kit"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91672909de8b1ce1c2252e95bbee8c1649c9ad9d14b9248b3d7b4c47903c47ad"
+dependencies = [
+ "bitflags 2.13.1",
+ "block2 0.6.2",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 

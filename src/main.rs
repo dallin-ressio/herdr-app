@@ -37,6 +37,7 @@ mod update;
 mod update_notes;
 mod vt;
 mod win32_keys;
+mod webview;
 mod window;
 
 use gpui::*;

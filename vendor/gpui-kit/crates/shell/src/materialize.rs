@@ -2248,7 +2248,9 @@ fn observe_size(
 ) -> AnyElement {
     let Some(callback) = callback.filter(|_| !checking()) else { return element };
     let last = window.use_keyed_state((identity, "size-change"), cx, |_, _| {
-        Rc::new(Cell::new(None::<(Option<u64>, gpui::Size<Pixels>)>))
+        // HERDR: origin is part of the snapshot so a pane that moves without
+        // changing size still reports its window position (a hosted native view).
+        Rc::new(Cell::new(None::<(Option<u64>, gpui::Point<Pixels>, gpui::Size<Pixels>)>))
     }).read(cx).clone();
     SizeObserver {
         element, last, callback,
@@ -2260,7 +2262,7 @@ fn observe_size(
 // Reuse the element's layout node: a full-size canvas child excludes its borders.
 struct SizeObserver {
     element: AnyElement,
-    last: Rc<Cell<Option<(Option<u64>, gpui::Size<Pixels>)>>>,
+    last: Rc<Cell<Option<(Option<u64>, gpui::Point<Pixels>, gpui::Size<Pixels>)>>>,
     application: Option<u64>,
     callback: CallbackId,
     runtime: Weak<ShellRuntime>,
@@ -2290,13 +2292,13 @@ impl gpui::Element for SizeObserver {
         bounds: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App,
     ) {
         self.element.prepaint(window, cx);
-        let current = (self.application, bounds.size);
+        let current = (self.application, bounds.origin, bounds.size);
         if self.last.replace(Some(current)) != Some(current) {
             let runtime = self.runtime.clone();
             let callback = self.callback;
             window.defer(cx, move |window, cx| {
                 if let Some(runtime) = runtime.upgrade() {
-                    runtime.dispatch_size_change(callback, bounds.size, window, cx);
+                    runtime.dispatch_size_change(callback, bounds, window, cx);
                 }
             });
         }
