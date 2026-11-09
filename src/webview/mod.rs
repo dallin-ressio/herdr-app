@@ -33,6 +33,33 @@ pub fn view_visible(obscured: bool, laid_out: &HashSet<String>, pane: &str, fram
     !obscured && laid_out.contains(pane) && frame.is_some_and(|f| f.width >= 1.0 && f.height >= 1.0)
 }
 
+/// A command-key editing chord the page should handle. Control and Option
+/// stay with the app; Shift distinguishes undo from redo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditingCommand {
+    Copy,
+    Cut,
+    Paste,
+    SelectAll,
+    Undo,
+    Redo,
+}
+
+pub fn page_editing_command(command: bool, shift: bool, control: bool, option: bool, function: bool, key: &str) -> Option<EditingCommand> {
+    if !command || control || option || function {
+        return None;
+    }
+    match (key, shift) {
+        ("c", false) => Some(EditingCommand::Copy),
+        ("x", false) => Some(EditingCommand::Cut),
+        ("v", false) => Some(EditingCommand::Paste),
+        ("a", false) => Some(EditingCommand::SelectAll),
+        ("z", false) => Some(EditingCommand::Undo),
+        ("z", true) => Some(EditingCommand::Redo),
+        _ => None,
+    }
+}
+
 pub fn allowed_url(url: &str) -> bool {
     let url = url.trim();
     if url.eq_ignore_ascii_case("about:blank") {
@@ -50,6 +77,8 @@ struct Host {
     /// Panes whose nodes were laid out during this frame.
     laid_out: HashSet<String>,
     obscured: bool,
+    /// Pane whose page was given the keyboard, until an agent, field, or dialog takes it.
+    owns: Option<String>,
     /// Set from a click in the page; the next frame gives that web view the keyboard
     /// after GPUI takes it back for the pane focus change.
     clicked: Option<String>,
@@ -75,6 +104,7 @@ thread_local! {
         next: 0,
         laid_out: HashSet::new(),
         obscured: false,
+        owns: None,
         clicked: None,
         views: Vec::new(),
     });
@@ -130,6 +160,11 @@ pub fn keyboard_pane() -> Option<String> {
     with_host(|host| host.clicked.clone())
 }
 
+/// The page was given the keyboard and has not handed it to an agent or field.
+pub fn page_owns_keyboard() -> bool {
+    with_host(|host| host.owns.is_some())
+}
+
 /// Drops every web view attached to a layout slot. Safe to call twice.
 pub fn destroy_pane(pane: &str) {
     let gone = with_host(|host| {
@@ -141,6 +176,10 @@ pub fn destroy_pane(pane: &str) {
             } else {
                 keep.push(view);
             }
+        }
+        if host.owns.as_deref() == Some(pane) {
+            host.owns = None;
+            host.clicked = None;
         }
         host.views = keep;
         gone
@@ -169,6 +208,44 @@ pub fn restore_keyboard(window: &mut Window) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (pane, window);
+}
+
+/// A dialog paints under the page, so the page has to give the keys back while
+/// one is open. The page keeps its claim and takes the keys again when it closes.
+pub fn release_field_focus(window: &mut gpui::Window, cx: &mut gpui::App) {
+    #[cfg(target_os = "macos")]
+    {
+        let obscured = with_host(|host| host.obscured);
+        if obscured && macos::page_holds_keyboard() {
+            window.defer(cx, |_, _| macos::blur());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, cx);
+}
+
+/// Puts the keyboard back on the page that owns it (a dialog just closed).
+pub fn restore_owned_keyboard() {
+    #[cfg(target_os = "macos")]
+    {
+        let native = with_host(|host| {
+            let pane = host.owns.clone()?;
+            host.views.iter().find(|view| view.pane == pane).map(|view| view.native.clone())
+        });
+        if let Some(native) = native {
+            native.focus();
+        }
+    }
+}
+
+/// An agent or field was clicked. The page stops taking keys.
+pub fn yield_to_app() {
+    with_host(|host| {
+        host.owns = None;
+        host.clicked = None;
+    });
+    #[cfg(target_os = "macos")]
+    macos::blur();
 }
 
 pub fn create(pane: String, url: Option<String>) -> Result<String, String> {
@@ -240,7 +317,12 @@ pub fn reload(id: &str) -> Result<(), String> {
 pub fn focus(id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        native(id)?.focus();
+        let native = native(id)?;
+        let pane = with_host(|host| host.views.iter().find(|view| view.id == id).map(|view| view.pane.clone()));
+        native.focus();
+        if let Some(pane) = pane {
+            with_host(|host| host.owns = Some(pane));
+        }
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
@@ -252,6 +334,7 @@ pub fn blur(id: &str) -> Result<(), String> {
         let known = host.views.iter().any(|v| v.id == id);
         if known {
             host.clicked = None;
+            host.owns = None;
         }
         known
     });
@@ -305,7 +388,10 @@ pub fn state(id: &str) -> Option<Value> {
 /// The page was clicked. Remember it so `restore_keyboard` can give it the keys
 /// after the pane-focus update moves them to the GPUI view.
 pub fn page_clicked(pane: &str) {
-    with_host(|host| host.clicked = Some(pane.to_owned()));
+    with_host(|host| {
+        host.clicked = Some(pane.to_owned());
+        host.owns = Some(pane.to_owned());
+    });
     crate::mods::request(crate::mods::Request::Run { name: "pane.focus".into(), args: json!({ "pane": pane }) });
 }
 
@@ -360,5 +446,21 @@ mod tests {
         assert!(!allowed_url("javascript:alert(1)"));
         assert!(!allowed_url("example.com"));
         assert!(!allowed_url("https:example.com"));
+    }
+
+    #[test]
+    fn page_editing_chords_are_only_bare_command_keys() {
+        assert_eq!(page_editing_command(true, false, false, false, false, "c"), Some(EditingCommand::Copy));
+        assert_eq!(page_editing_command(true, false, false, false, false, "x"), Some(EditingCommand::Cut));
+        assert_eq!(page_editing_command(true, false, false, false, false, "v"), Some(EditingCommand::Paste));
+        assert_eq!(page_editing_command(true, false, false, false, false, "a"), Some(EditingCommand::SelectAll));
+        assert_eq!(page_editing_command(true, false, false, false, false, "z"), Some(EditingCommand::Undo));
+        assert_eq!(page_editing_command(true, true, false, false, false, "z"), Some(EditingCommand::Redo));
+        assert_eq!(page_editing_command(true, true, false, false, false, "c"), None);
+        assert_eq!(page_editing_command(true, false, true, false, false, "c"), None);
+        assert_eq!(page_editing_command(true, false, false, true, false, "v"), None);
+        assert_eq!(page_editing_command(true, false, false, false, true, "c"), None);
+        assert_eq!(page_editing_command(false, false, false, false, false, "c"), None);
+        assert_eq!(page_editing_command(true, false, false, false, false, "t"), None);
     }
 }

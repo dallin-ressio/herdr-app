@@ -61,6 +61,27 @@ install:
 install:
     bash scripts/install-macos
 
+# This branch's window. Layouts and personal mods are links to the installed
+# app's home, so the two stay in sync. The window's own tabs stay separate.
+[macos]
+browser:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$(pwd)
+    bin="$root/target/debug/herdr-app"
+    if [[ ! -x "$bin" ]]; then
+      echo "run: just build" >&2
+      exit 1
+    fi
+    bash "$root/scripts/browser-home.sh"
+    mkdir -p "${HOME}/.local/state/herdr-browser"
+    exec env \
+      HERDR_APP_HOME="${HOME}/.config/herdr-browser" \
+      XDG_STATE_HOME="${HOME}/.local/state/herdr-browser" \
+      HERDR_APP_NO_SOUND=1 \
+      HERDR_APP_ID=herdr-browser-dev \
+      "$bin"
+
 [windows]
 install:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1

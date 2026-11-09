@@ -846,6 +846,11 @@ impl TerminalView {
             // leak its keystrokes into the shell running in this terminal.
             return;
         }
+        // A page above this view already took the key. WebKit also forwards it here.
+        if crate::webview::page_owns_keyboard() {
+            cx.stop_propagation();
+            return;
+        }
         let k = &ev.keystroke;
         // Typing clears a selection, as in Herdr.
         if !k.key.starts_with("shift") && !k.key.starts_with("control") && !k.key.starts_with("alt") {
@@ -2078,6 +2083,9 @@ impl Render for TerminalView {
                 }
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                // The click is for this terminal. A page that had the keys must
+                // let go, or the same characters land in both.
+                crate::webview::yield_to_app();
                 this.focus.focus(window, cx);
                 if link_mods(&ev.modifiers)
                     && let Some((target, _)) = this.link_at(ev.position)

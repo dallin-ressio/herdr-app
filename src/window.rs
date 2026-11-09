@@ -1487,15 +1487,30 @@ impl AppWindow {
         let tab_shown = self.shows_tab();
         let revealed = tab_shown && !self.tab_shown;
         self.tab_shown = tab_shown;
+        let page_owns = crate::webview::page_owns_keyboard();
         if terminal_block(&self.chrome, focused.as_deref()).is_some() {
-            if pane_changed && no_dialog && let Some(f) = focused.as_deref().and_then(|p| self.pane_focus(p, cx)) {
-                f.focus(window, cx);
+            if pane_changed && no_dialog {
+                // This pane is a terminal. The page gives the keys up.
+                if page_owns {
+                    crate::webview::yield_to_app();
+                }
+                if let Some(f) = focused.as_deref().and_then(|p| self.pane_focus(p, cx)) {
+                    f.focus(window, cx);
+                }
             }
         } else if let Some(block) = self.agent_block() {
             let shown = self.shown_agent();
             if shown != self.agent_focused || pane_changed {
+                let agent_changed = shown != self.agent_focused;
                 self.agent_focused = shown.clone();
-                if no_dialog && let Some(t) = shown.and_then(|a| self.agent_view(&block, &a)) {
+                // Switching agents takes the keys. A browser click only changes
+                // the pane, and the page keeps what the click just gave it.
+                if no_dialog && page_owns && agent_changed {
+                    crate::webview::yield_to_app();
+                }
+                if no_dialog && crate::webview::page_owns_keyboard() {
+                    self.focus.focus(window, cx);
+                } else if no_dialog && let Some(t) = shown.and_then(|a| self.agent_view(&block, &a)) {
                     t.focus.focus(window, cx);
                 }
             }
@@ -1504,7 +1519,9 @@ impl AppWindow {
             self.agent = None;
             // A mod pane takes the keyboard on a click; until then the window holds
             // it, so another tab's terminal can't keep it (and pull its tab back).
-            if no_dialog && crate::webview::keyboard_pane().as_deref() != focused.as_deref() {
+            if no_dialog && page_owns {
+                self.focus.focus(window, cx);
+            } else if no_dialog && crate::webview::keyboard_pane().as_deref() != focused.as_deref() {
                 // A click in a web view already made it first responder. Moving the
                 // keyboard to the window here would take it back on the same update.
                 focused.and_then(|p| self.pane_focus(&p, cx)).unwrap_or_else(|| self.focus.clone()).focus(window, cx);
@@ -1566,6 +1583,12 @@ impl AppWindow {
     /// else the window, where the app's keys work.
     fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| o.focus.clone());
+        // The page owns the keys. Putting them on an agent here is what types into both.
+        if dialog.is_none() && crate::webview::page_owns_keyboard() {
+            self.focus.focus(window, cx);
+            crate::webview::restore_owned_keyboard();
+            return;
+        }
         // A mod block holding the keyboard gets it back (a popup over it closed).
         if dialog.is_none() && self.focused_block.as_ref().is_some_and(|b| self.mod_block_shown(b)) {
             self.focus.focus(window, cx);
@@ -4882,8 +4905,23 @@ impl Render for AppWindow {
         // then show only those once layout has reported their rectangles.
         crate::webview::begin_frame();
         crate::webview::note_window(window);
+        let page_click = crate::webview::keyboard_pane().is_some();
         crate::webview::restore_keyboard(window);
-        crate::webview::set_obscured(self.overlays.iter().any(|o| o.kind.modal_keys()));
+        let modal = self.overlays.iter().any(|o| o.kind.modal_keys());
+        crate::webview::set_obscured(modal);
+        // A click in the page leaves the agent focused unless we move GPUI focus
+        // off it. A click in an agent (it clears the page's claim first) takes
+        // the keys back. A stale agent handle after the page was given the keys
+        // is dropped instead, so one key is not typed into both.
+        let agent_focused = self.terms.values().any(|term| term.focus.is_focused(window));
+        if !modal && page_click && agent_focused {
+            self.focus.focus(window, cx);
+        } else if !modal && !page_click && agent_focused && crate::webview::page_owns_keyboard() {
+            self.focus.focus(window, cx);
+        } else if !modal && !page_click && agent_focused {
+            crate::webview::yield_to_app();
+        }
+        crate::webview::release_field_focus(window, cx);
         window.defer(cx, |_window, _cx| crate::webview::finish_frame());
         window.set_rem_size(px(settings::ui_font_size()));
         // A terminal the person clicked into becomes the focused pane.
@@ -4933,6 +4971,11 @@ impl Render for AppWindow {
             .text_color(c("foreground"))
             .font_family(settings::get().ui_font_family.clone())
             .on_action(cx.listener(|this, a: &ShellAction, w, cx| {
+                // The page owns these chords. Letting them through types into the
+                // agent as well, and Command-C/V then hit the app menu and quit.
+                if matches!(a.id(), "terminal.copy" | "terminal.paste" | "terminal.paste_image") && crate::webview::page_owns_keyboard() {
+                    return;
+                }
                 // Nothing selected: the copy chord goes to the program (#216).
                 if a.id() == "terminal.copy" {
                     if !this.copy_key(w, cx) {

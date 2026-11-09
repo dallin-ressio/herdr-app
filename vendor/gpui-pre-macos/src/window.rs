@@ -2583,7 +2583,56 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
 }
 
 extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> BOOL {
+    // This view overrides the default, which would have asked its subviews.
+    // A page hosted above the GPU layer (a WKWebView, often via its private
+    // content view) has to see the chord first. Otherwise command-c/v land in
+    // whatever GPUI field is still focused, such as an address bar.
+    if descendant_handles_key_equivalent(this, native_event) == YES {
+        return YES;
+    }
     handle_key_event(this, native_event, true)
+}
+
+fn descendant_handles_key_equivalent(this: &Object, event: id) -> BOOL {
+    thread_local! {
+        static INSIDE: Cell<bool> = const { Cell::new(false) };
+    }
+    if INSIDE.with(|guard| guard.replace(true)) {
+        return NO;
+    }
+    let handled = unsafe { offer_key_equivalent_to_descendants(this, event) };
+    INSIDE.with(|guard| guard.set(false));
+    handled
+}
+
+unsafe fn offer_key_equivalent_to_descendants(this: &Object, event: id) -> BOOL {
+    unsafe {
+        let window: id = msg_send![this, window];
+        if window == nil {
+            return NO;
+        }
+        let view = this as *const Object as id;
+        let mut responder: id = msg_send![window, firstResponder];
+        if responder == nil || responder == view {
+            return NO;
+        }
+        // From the key view up to, but not including, this view.
+        for _ in 0..32 {
+            if responder == nil || responder == view {
+                return NO;
+            }
+            let is_view: BOOL = msg_send![responder, isKindOfClass: class!(NSView)];
+            if is_view == NO {
+                return NO;
+            }
+            let handled: BOOL = msg_send![responder, performKeyEquivalent: event];
+            if handled == YES {
+                return YES;
+            }
+            responder = msg_send![responder, superview];
+        }
+        NO
+    }
 }
 
 extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
