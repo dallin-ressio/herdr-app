@@ -10,7 +10,7 @@ publish = false
 
 [package]
 name = "herdr-app"
-version = "0.1.14"
+version = "0.1.16"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -33,6 +33,7 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fancy-regex = "0.19"
+regex = "1"
 notify = "7"
 sha2 = "0.10"
 
@@ -62,7 +63,7 @@ objc2 = "0.6"
 block2 = "0.6"
 raw-window-handle = "0.6"
 objc2-foundation = { version = "0.3.2", features = ["NSString", "NSURL", "NSURLRequest", "NSError", "NSGeometry", "NSObject"] }
-objc2-app-kit = { version = "0.3.2", features = ["NSEvent", "NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", features = ["NSApplication", "NSDockTile", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
 # 0.3.2 of this crate dropped the WKWebView feature; 0.3.1 still has it.
 objc2-web-kit = { version = "=0.3.1", default-features = false, features = ["WKWebView", "WKWebViewConfiguration", "WKNavigation", "WKNavigationDelegate", "WKWebsiteDataStore", "objc2-app-kit", "objc2-core-foundation", "block2"] }
 
